@@ -22,11 +22,18 @@ button:disabled{opacity:.5;cursor:default}
 .layout{display:grid;grid-template-columns:270px 1fr;max-width:1200px;margin:0 auto}
 nav{border-right:1px solid var(--line);height:calc(100vh - 53px);overflow:auto;position:sticky;top:53px;padding:12px}
 nav input{margin-bottom:8px}
-nav .grp{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:12px 6px 4px}
-nav .f{padding:5px 8px;border-radius:7px;cursor:pointer;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-nav .f:hover{background:var(--hover)}
+nav .area{display:flex;align-items:center;gap:10px;padding:10px 10px;border-radius:9px;cursor:pointer;font-size:15px;font-weight:500;margin-top:2px}
+nav .area:hover,nav .d:hover,nav .f:hover{background:var(--hover)}
+nav .area.active{background:var(--card);border:1px solid var(--line)}
+nav .area.cur{font-weight:600}
+nav .ic{width:22px;text-align:center}
+nav .car{color:var(--muted);font-size:11px;width:12px;display:inline-block}
+nav .car.r{margin-left:auto}
+nav .kids{margin:2px 0 8px 22px;border-left:1px solid var(--line)}
+nav .d{padding:7px 10px;border-radius:7px;cursor:pointer;font-size:14px;color:var(--text);display:flex;gap:6px;align-items:center}
+nav .f{padding:7px 10px;border-radius:7px;cursor:pointer;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.35}
 nav .f.active{background:var(--card);border:1px solid var(--line);font-weight:600}
-nav .f.hist{color:var(--muted)}
+nav .hist,nav .f.hist{color:var(--muted)}
 main{padding:20px;min-width:0}
 .bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
 .bar .path{color:var(--muted);font-size:13px}
@@ -247,23 +254,41 @@ function setBusy(b){ $('busy').style.display = b ? 'block' : 'none'; document.qu
 const isHist = p => /(^|\/)history\//.test(p);
 const title = p => { const t = p.split('/').pop().replace(/\.md$/i, '').replace(/^README$/i, 'Overview').replace(/[-_]+/g, ' '); return t.charAt(0).toUpperCase() + t.slice(1); };
 
+const ICONS = {russian:'🇷🇺', exercise:'🏃', books:'📚', watch:'🎬', podcasts:'🎧', intellectual:'🧠', courses:'🎓', work:'💼', health:'🩺', cooking:'🍳', photography:'📷', misc:'🌱'};
+let openDirs = new Set(loadJSON(KEY + '.open').dirs || []);
+function saveOpen(){ try{ localStorage.setItem(KEY + '.open', JSON.stringify({dirs: [...openDirs]})); }catch(e){} }
+const cap = t => t.charAt(0).toUpperCase() + t.slice(1).replace(/[-_]+/g, ' ');
+function buildTree(paths){
+  const root = {dirs:{}, files:[]};
+  paths.forEach(p => { const parts = p.split('/'); let n = root;
+    parts.slice(0, -1).forEach((d, i) => { n = n.dirs[d] = n.dirs[d] || {dirs:{}, files:[], path: parts.slice(0, i + 1).join('/')}; });
+    n.files.push(p); });
+  return root;
+}
+function navNode(node, depth){
+  const files = node.files.slice().sort((a, b) => /README\.md$/.test(b) - /README\.md$/.test(a) || a.localeCompare(b));
+  const dirs = Object.keys(node.dirs).sort((a, b) => (a === 'history') - (b === 'history') || a.localeCompare(b));
+  let h = files.map(p => `<div class="f ${cur && cur.path === p ? 'active' : ''} ${isHist(p) ? 'hist' : ''}" style="padding-left:${12 + depth * 14}px" data-open="${esc(p)}" title="${esc(p)}">${esc(title(p))}</div>`).join('');
+  h += dirs.map(d => { const n = node.dirs[d], o = openDirs.has(n.path);
+    return `<div class="d ${d === 'history' ? 'hist' : ''}" style="padding-left:${12 + depth * 14}px" data-dir="${esc(n.path)}"><span class="car">${o ? '▾' : '▸'}</span>${esc(cap(d))}</div>` + (o ? navNode(n, depth + 1) : ''); }).join('');
+  return h;
+}
 function renderNav(){
   const nav = $('nav');
   if(!ready()){ nav.innerHTML = ''; return; }
-  const q = filter.toLowerCase();
-  const groups = {};
-  files.filter(p => !q || p.toLowerCase().includes(q)).forEach(p => {
-    const parts = p.split('/'); const g = parts.length > 1 ? parts.slice(0, -1).join(' / ') : 'Home';
-    (groups[g] = groups[g] || []).push(p);
-  });
-  const order = Object.keys(groups).sort((a, b) => (a === 'Home' ? -1 : b === 'Home' ? 1 : (/(^| \/ )history$/.test(a) - /(^| \/ )history$/.test(b)) || a.localeCompare(b)));
-  nav.innerHTML = `<input id="search" placeholder="Find a file…" value="${esc(filter)}">` + order.map(g =>
-    `<div class="grp">${esc(g)}</div>` + groups[g].sort((a, b) => /README\.md$/.test(b) - /README\.md$/.test(a) || a.localeCompare(b)).map(p =>
-      `<div class="f ${cur && cur.path === p ? 'active' : ''} ${isHist(p) ? 'hist' : ''}" data-open="${esc(p)}" title="${esc(p)}">${esc(title(p))}</div>`).join('')
-  ).join('');
+  let h = `<input id="search" placeholder="Find a file…" value="${esc(filter)}">`;
+  if(filter){
+    const q = filter.toLowerCase();
+    h += files.filter(p => p.toLowerCase().includes(q)).map(p => `<div class="f ${cur && cur.path === p ? 'active' : ''}" data-open="${esc(p)}"><span class="muted">${esc(p.split('/').slice(0, -1).join(' / '))}</span><br>${esc(title(p))}</div>`).join('') || '<div class="muted" style="padding:8px">No match</div>';
+  } else {
+    const tree = buildTree(files);
+    if(tree.files.includes('README.md')) h += `<div class="area ${cur && cur.path === 'README.md' ? 'active' : ''}" data-open="README.md"><span class="ic">🏠</span>Home</div>`;
+    h += Object.keys(tree.dirs).sort().map(d => { const n = tree.dirs[d], o = openDirs.has(n.path), on = cur && cur.path.startsWith(d + '/');
+      return `<div class="area ${on ? 'cur' : ''}" data-dir="${esc(d)}"><span class="ic">${ICONS[d] || '📁'}</span>${esc(cap(d))}<span class="car r">${o ? '▾' : '▸'}</span></div>` + (o ? `<div class="kids">${navNode(n, 0)}</div>` : ''); }).join('');
+  }
+  nav.innerHTML = h;
   const s = $('search'); s.oninput = e => { filter = e.target.value; renderNav(); const n = $('search'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); };
 }
-
 function render(){
   renderNav();
   const m = $('main');
@@ -344,6 +369,7 @@ function renderSettings(m){
 async function loadList(){ setBusy(true); try{ files = await listFiles(); }catch(e){ toast(e.message, null, true); } setBusy(false); }
 async function open(path){
   setBusy(true); addAt = editAt = null; view = 'file';
+  path.split('/').slice(0, -1).forEach((_, i, a) => openDirs.add(a.slice(0, i + 1).join('/'))); saveOpen();
   try{ cur = {path, ...(await getFile(path))}; try{ localStorage.setItem(KEY + '.last', path); }catch(e){} location.hash = ''; }
   catch(e){ toast(e.message, null, true); }
   setBusy(false); $('nav').classList.remove('open'); render(); window.scrollTo(0, 0);
@@ -352,9 +378,10 @@ const L = () => cur.text.split('\n');
 const name = () => title(cur.path) === 'Overview' ? (cur.path.split('/').slice(-2, -1)[0] || 'README') : title(cur.path);
 
 document.addEventListener('click', async e => {
-  const el = e.target.closest('[data-open],[data-addat],[data-addgo],[data-edit],[data-save],[data-del],[data-cancel],button,a#reload');
+  const el = e.target.closest('[data-open],[data-dir],[data-addat],[data-addgo],[data-edit],[data-save],[data-del],[data-cancel],button,a#reload');
   if(!el) return;
   if(el.dataset.open){ e.preventDefault(); return open(el.dataset.open); }
+  if(el.dataset.dir){ const d = el.dataset.dir; openDirs.has(d) ? openDirs.delete(d) : openDirs.add(d); saveOpen(); return renderNav(); }
   if(el.dataset.addat !== undefined){ addAt = +el.dataset.addat; editAt = null; return render(); }
   if(el.dataset.cancel !== undefined){ addAt = editAt = null; return render(); }
   if(el.dataset.edit !== undefined){ editAt = +el.dataset.edit; addAt = null; return render(); }
