@@ -93,6 +93,20 @@ mark{background:#fff3a3;color:inherit;border-radius:3px;padding:0 1px}
 @media (prefers-color-scheme:dark){mark{background:#6b5b00}}
 .flash{animation:fl 2s ease-out}
 @keyframes fl{0%,40%{background:#fff3a3}100%{background:transparent}}
+.askbox{margin-bottom:14px}
+.askrow{display:flex;gap:8px}
+.askrow input{font-size:16px;padding:10px 12px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.chip{font-size:13px;padding:4px 10px;border-radius:999px;background:var(--bg)}
+.askintro{font-size:15px;margin:4px 2px 10px}
+.card{display:flex;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:8px}
+.card input[type=checkbox]{margin-top:4px;width:18px;height:18px;flex:none}
+.card .cb{flex:1;min-width:0;overflow-wrap:anywhere}
+.card .ctx2{font-size:12px;color:var(--muted);margin-bottom:2px}
+.card .why{color:var(--muted);font-size:14px;margin-top:3px}
+.card .where{font-size:12px;display:inline-block;margin-top:4px}
+.card.idea button{margin-top:6px;font-size:13px}
+.ideash{font-size:15px;margin:18px 2px 8px}
 .help{font-size:13px;color:var(--muted);margin:4px 0 14px}
 .help code{font-size:12px}
 @media (max-width:800px){
@@ -118,6 +132,7 @@ mark{background:#fff3a3;color:inherit;border-radius:3px;padding:0 1px}
   <button id="menuBtn">☰</button>
   <h1>Curiosity Tracker</h1>
   <div class="qwrap"><input id="q" type="search" placeholder="Search everything…" autocomplete="off"><kbd id="kbdHint">⌘K</kbd></div>
+  <button id="askBtn" title="Ask for suggestions">✨ <span class="lg">Ask</span></button>
   <span class="spacer"></span>
   <button id="settingsBtn" title="Settings"><span class="lg">Settings</span><span class="sm">⚙</span></button>
 </header>
@@ -330,6 +345,7 @@ function render(){
   const m = $('main');
   if(view === 'settings' || !ready()) return renderSettings(m);
   if(view === 'search') return renderSearch(m);
+  if(view === 'ask') return renderAsk(m);
   if(!cur){ m.innerHTML = '<div class="doc muted">Pick a file on the left.</div>'; return; }
   const L = cur.text.split('\n');
   let open = 0, done = 0;
@@ -397,7 +413,10 @@ function renderSettings(m){
     <div><label>Branch</label><input id="s_branch" value="${esc(cfg.branch)}"></div>
     <div><label>Personal access token</label><input id="s_token" type="password" value="${esc(cfg.token)}" placeholder="github_pat_…"></div>
     <div class="muted">Create a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained token</a>
-      with access to this repo only and <b>Contents: Read and write</b>. It stays in this browser only.</div></div>
+      with access to this repo only and <b>Contents: Read and write</b>. It stays in this browser only.</div>
+    <div style="margin-top:8px"><label>Claude API key (optional, for ✨ Ask)</label><input id="s_anthropicKey" type="password" value="${esc(cfg.anthropicKey || '')}" placeholder="sk-ant-…"></div>
+    <div><label>Claude model</label><select id="s_anthropicModel">${['claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-opus-5-5'].map(x => `<option ${x === (cfg.anthropicModel || 'claude-sonnet-5-5') ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+    <div class="muted">Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>. Each question is billed to your Anthropic account; Haiku is cheapest. The key stays in this browser only and is sent only to Anthropic. Without a key, Ask uses basic matching.</div></div>
     <div style="display:flex;gap:8px;margin-top:14px"><button class="primary" id="saveSettings">Save & connect</button>
     ${ready() ? '<button id="closeSettings">Cancel</button><button class="danger" id="forget">Forget token</button>' : ''}</div></div>`;
 }
@@ -558,6 +577,205 @@ async function runSearch(){
   if(view === 'search') render();
 }
 
+
+// ===== ask: suggestions (separate from search) =====
+let askState = {q: '', busy: false, res: null, err: '', mode: ''};
+const ASK_TYPES = {
+  documentary: {words: ['documentary', 'documentaries', 'doc', 'docs', 'belgesel', 'docuseries'], paths: [/^intellectual\/(?!meetups)/]},
+  film:        {words: ['film', 'films', 'movie', 'movies', 'cinema', 'tonight', 'evening'], paths: [/^watch\/(films|russian)\.md$/], notHeading: /series|animation/i},
+  series:      {words: ['series', 'show', 'shows', 'tv', 'dizi', 'binge'], paths: [/^watch\/(series|russian)\.md$/], heading: /series/i},
+  animation:   {words: ['animation', 'animated', 'cartoon', 'cartoons'], paths: [/^watch\/russian\.md$/], heading: /animation/i},
+  book:        {words: ['book', 'books', 'read', 'reading', 'novel', 'novels', 'kitap'], paths: [/^books\//]},
+  podcast:     {words: ['podcast', 'podcasts', 'listen', 'episode', 'episodes'], paths: [/^podcasts\//, /^russian\/practice\/russian-with-max/], also: it => /^intellectual\//.test(it.path) && /rest is/i.test(it.heading)},
+  course:      {words: ['course', 'courses', 'class', 'lesson', 'lessons', 'learn'], paths: [/^courses\//, /^work\//, /^russian\/courses\//]},
+  workout:     {words: ['workout', 'exercise', 'pilates', 'yoga', 'training'], paths: [/^exercise\//]},
+  hike:        {words: ['hike', 'hikes', 'walk', 'walks'], paths: [/^exercise\/hikes/]},
+  meetup:      {words: ['meetup', 'meetups', 'event', 'events'], paths: [/^intellectual\/meetups/, /^photography\//]},
+};
+const ASK_TOPICS = {
+  russia: ['russia', 'russian', 'soviet', 'ussr', 'putin', 'moscow', 'kremlin', 'stalin', 'lenin', 'tsar', 'россия', 'русск', 'совет'],
+  ukraine: ['ukraine', 'ukrainian', 'kyiv'],
+  ww2: ['wwii', 'ww2', 'world war ii', 'second world war', 'hitler', 'nazi', 'third reich'],
+  ww1: ['wwi', 'ww1', 'world war one', 'world war i', 'first world war', 'great war', 'gallipoli', 'trenches'],
+  'cold war': ['cold war', 'iron curtain', 'bomb', 'nuclear'],
+  turkey: ['turkey', 'turkish', 'türk', 'turk', 'ottoman', 'atatürk', 'ataturk', 'istanbul', 'anatolia'],
+  britain: ['britain', 'british', 'england', 'uk', 'crown', 'churchill', 'thatcher', 'monarchy'],
+  space: ['space', 'nasa', 'planet', 'moon', 'mars', 'universe', 'cosmos', 'galaxy', 'astronaut', 'fermi'],
+  ai: [' ai ', 'artificial intelligence', 'claude', 'openai', 'agi', 'machine learning', 'llm'],
+  tech: ['tech', 'technology', 'software', 'internet', 'computer', 'google', 'amazon'],
+  'sci-fi': ['sci-fi', 'science fiction', 'asimov', 'clarke', 'dune', 'robot', 'space odyssey'],
+  history: ['history', 'historical', 'empire', 'war', 'revolution'],
+  politics: ['politics', 'political', 'election', 'democracy', 'government', 'policy'],
+  nature: ['nature', 'planet', 'animals', 'wildlife', 'antarctica', 'ocean', 'forest'],
+  travel: ['travel', 'journey', 'country', 'city', 'island'],
+  psychology: ['psychology', 'mind', 'emotion', 'habit', 'behaviour', 'behavior', 'thinking', 'decision'],
+  communication: ['communication', 'conversation', 'talk', 'influence', 'negotiat', 'speak'],
+  money: ['money', 'economy', 'economics', 'finance', 'wealth'],
+  philosophy: ['philosophy', 'philosopher', 'meaning', 'existential'],
+  comedy: ['comedy', 'funny', 'light', 'fun', 'laugh', 'humour', 'humor', 'комеди'],
+  love: ['love', 'romance', 'romantic', 'relationship', 'dating'],
+  'russian practice': ['wordwall', 'russian with max', 'lesson', 'grammar', 'vocabulary'],
+};
+const ASK_STOP = new Set('a an the i me my want to watch see read listen something some about on in of for and or with like would could please show give recommend suggest any new one that this is be have haven t not yet never again re tonight today now good great best what which can you do find me'.split(' '));
+
+function askItems(){
+  const items = [];
+  for(const [path, {text}] of cache){
+    if(!fileSha[path] || path === 'README.md') continue;
+    const L = text.split('\n'); const heads = [];
+    L.forEach((l, i) => {
+      const h = l.match(HEAD);
+      if(h){ heads.length = h[1].length - 1; heads[h[1].length - 1] = plain(h[2]); return; }
+      const c = l.match(CHECK); if(!c) return;
+      const t = plain(c[4]); if(!t || t.length < 3) return;
+      // parent item text (for nested items like episodes or a director's films)
+      let parent = ''; const ind0 = indentOf(l);
+      if(ind0 > 0) for(let k = i - 1; k >= 0; k--){ const pl = L[k]; if(pl.trim() && indentOf(pl) < ind0 && BULLET.test(pl)){ parent = plain(pl.replace(/^\s*[-*+]\s+(\[[ xX]\]\s+)?/, '')); break; } if(HEAD.test(pl)) break; }
+      items.push({id: items.length, path, i, title: t, done: c[3] !== ' ', heading: heads.filter(Boolean).join(' › '), parent, bold: /\*\*/.test(c[4])});
+    });
+  }
+  return items;
+}
+function askParse(q){
+  const nq = ' ' + norm(q).replace(/[^\p{L}\p{N}\s'-]/gu, ' ') + ' ';
+  const types = Object.keys(ASK_TYPES).filter(t => ASK_TYPES[t].words.some(w => nq.includes(' ' + w + ' ') || (w.includes(' ') && nq.includes(w))));
+  const topics = Object.keys(ASK_TOPICS).filter(t => ASK_TOPICS[t].some(w => nq.includes(w.trim().length <= 3 ? ' ' + w.trim() + ' ' : norm(w))));
+  const negated = /(haven'?t|have not|hasn'?t|not yet|never|didn'?t|unwatched|unread|unseen|new to me)/.test(nq);
+  const wantDone = !negated && /\b(again|rewatch|re-watch|reread|re-read|already|watched|finished|done|favourite|favorite)\b/.test(nq);
+  const status = /^(haven't|havent|watched|seen|read|finished|done|again|already|yet|unwatched|unread|listened)$/;
+  const covered = new Set(types.flatMap(t => ASK_TYPES[t].words));
+  const terms = nq.split(/\s+/).filter(w => w.length > 2 && !ASK_STOP.has(w) && !covered.has(w) && !status.test(w));
+  const short = /\b(short|quick|small|brief)\b/.test(nq);
+  return {types, topics, wantDone, terms, short};
+}
+function askLocal(q){
+  const P = askParse(q), items = askItems();
+  const typeOk = it => !P.types.length || P.types.some(t => {
+    const T = ASK_TYPES[t];
+    if(T.also && T.also(it)) return true;
+    if(!T.paths.some(r => r.test(it.path))) return false;
+    if(T.heading && /^watch\/russian/.test(it.path) && !T.heading.test(it.heading)) return false;
+    if(T.notHeading && /^watch\/russian/.test(it.path) && T.notHeading.test(it.heading)) return false;
+    return true;
+  });
+  const scored = [];
+  for(const it of items){
+    if(it.done !== P.wantDone) continue;
+    if(!typeOk(it)) continue;
+    const hay = ' ' + norm([it.title, it.parent, it.heading, it.path.replace(/[\/._-]/g, ' ')].join(' ')) + ' ';
+    let s = 0; const why = [];
+    for(const t of P.topics){
+      const hit = ASK_TOPICS[t].some(w => hay.includes(w.trim().length <= 3 ? ' ' + norm(w.trim()) + ' ' : norm(w)));
+      if(hit){ s += 3; why.push(t); } else s -= 4;
+    }
+    for(const w of P.terms) if(hay.includes(w)){ s += 2; why.push(w); }
+    if(!P.topics.length && !P.terms.length) s += 1;
+    if(s <= 0) continue;
+    if(it.bold) s += 0.5;
+    if(it.parent && /^\d+[.:)]|part \d|episode|s\d\de\d/i.test(it.title)) s -= 0.7;
+    if(P.short && /\b(\d{1,2}) ?min|short/i.test(it.title)) s += 1;
+    scored.push({it, s: s + Math.random() * 0.8, why});
+  }
+  scored.sort((a, b) => b.s - a.s);
+  const picks = [], perGroup = {};
+  for(const x of scored){
+    const g = x.it.path + '|' + (x.it.parent || x.it.heading);
+    if((perGroup[g] = (perGroup[g] || 0) + 1) > 2) continue;
+    picks.push(x); if(picks.length >= 8) break;
+  }
+  const what = [P.types.join(' / ') || 'anything', P.topics.length ? 'about ' + P.topics.join(', ') : '', P.terms.length ? '(' + P.terms.join(', ') + ')' : '', P.wantDone ? '— already done' : '— not done yet'].filter(Boolean).join(' ');
+  return {intro: picks.length ? `Looking for ${what}. Here are ${picks.length} from your lists:` : `I couldn't find ${what} in your lists. Try other words, or add a Claude API key in Settings for smarter suggestions.`,
+          picks: picks.map(x => ({path: x.it.path, i: x.it.i, ctx: x.it.parent || x.it.heading, why: x.why.length ? 'Matches: ' + [...new Set(x.why)].join(', ') : ''})), ideas: []};
+}
+
+async function askClaude(q){
+  const P = askParse(q); let items = askItems();
+  // keep the catalogue focused: preferred type first, then everything else, open items unless asked otherwise
+  const pref = items.filter(it => !P.types.length || P.types.some(t => (ASK_TYPES[t].also && ASK_TYPES[t].also(it)) || ASK_TYPES[t].paths.some(r => r.test(it.path))));
+  let pool = (pref.length ? pref : items).filter(it => P.wantDone || !it.done || /again|watched|read|done|finished|favou?rite/i.test(q));
+  if(pool.length > 700){
+    const loc = new Set(askLocal(q).picks.map(p => p.path + ':' + p.i));
+    const hay = it => norm([it.title, it.parent, it.heading, it.path].join(' '));
+    const qt = norm(q).split(/\s+/).filter(w => w.length > 2 && !ASK_STOP.has(w));
+    pool = pool.map(it => ({it, s: (loc.has(it.path + ':' + it.i) ? 10 : 0) + qt.filter(w => hay(it).includes(w)).length + Math.random()}))
+               .sort((a, b) => b.s - a.s).slice(0, 700).map(x => x.it);
+  }
+  const catalogue = pool.map(it => `${it.id}|${it.done ? 'done' : 'open'}|${it.path}|${it.heading}${it.parent ? ' › ' + it.parent : ''}|${it.title.slice(0, 140)}`).join('\n');
+  const headings = {};
+  for(const it of items){ (headings[it.path] = headings[it.path] || new Set()).add(it.heading.split(' › ').pop() || ''); }
+  const targets = Object.entries(headings).filter(([p]) => /^(watch|books|intellectual|podcasts|courses)\//.test(p) && !/meetups/.test(p))
+    .map(([p, hs]) => `${p}: ${[...hs].filter(Boolean).slice(0, 12).join(' | ')}`).join('\n');
+  const sys = `You recommend things from the user's personal tracker lists (documentaries, films, series, books, podcasts, courses, practice material). The user is learning Russian, likes history, politics, Russia/Soviet culture, Turkish history, sci-fi and self-development.
+Pick from the CATALOGUE (lines are id|status|file|section|title). Prefer "open" items unless the user asks for things already done. Pick items that truly fit the request; quality over quantity (3–8 picks).
+You may also suggest up to 3 well-known real titles NOT in the catalogue that fit; for each give the best target file and section from TARGETS so it can be added there. Only suggest real works you are confident exist; include year and creator.
+Reply with JSON only: {"intro": "one short sentence", "picks": [{"id": number, "why": "one short sentence"}], "ideas": [{"title": "Title, Year (Creator)", "why": "one short sentence", "file": "path", "section": "section name"}]}`;
+  const r = await fetch('https://api.anthropic.com/v1/messages', {method: 'POST', headers: {
+      'x-api-key': cfg.anthropicKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json', 'anthropic-dangerous-direct-browser-access': 'true'},
+    body: JSON.stringify({model: cfg.anthropicModel || 'claude-sonnet-5-5', max_tokens: 1500, system: sys,
+      messages: [{role: 'user', content: `REQUEST: ${q}\n\nTARGETS:\n${targets}\n\nCATALOGUE:\n${catalogue}`}]})});
+  if(!r.ok){ let m = r.status + ''; try{ m = (await r.json()).error.message; }catch(e){} throw new Error('Claude API: ' + m); }
+  const data = await r.json();
+  const txt = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+  const j = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1));
+  const byId = new Map(items.map(it => [it.id, it]));
+  return {intro: j.intro || '', picks: (j.picks || []).map(p => byId.get(+p.id) && {path: byId.get(+p.id).path, i: byId.get(+p.id).i, ctx: byId.get(+p.id).parent || byId.get(+p.id).heading, why: p.why || ''}).filter(Boolean),
+          ideas: (j.ideas || []).filter(x => x && x.title && cache.has(x.file))};
+}
+
+async function runAsk(q){
+  q = (q || '').trim(); if(!q) return;
+  askState = {q, busy: true, res: null, err: '', mode: cfg.anthropicKey ? 'claude' : 'basic'};
+  view = 'ask'; render();
+  try{
+    await ensureIndex();
+    askState.res = askState.mode === 'claude' ? await askClaude(q) : askLocal(q);
+  }catch(e){
+    askState.err = e.message;
+    if(askState.mode === 'claude'){ askState.res = askLocal(q); askState.mode = 'basic'; }
+  }
+  askState.busy = false; if(view === 'ask') render();
+}
+
+const ASK_EXAMPLES = ['A documentary on Russia I haven’t watched', 'A Soviet comedy for tonight', 'Something about WWII', 'A sci-fi book', 'A short podcast episode on history', 'A series to binge', 'Something about Turkey'];
+function renderAsk(m){
+  const a = askState;
+  let h = `<div class="doc askbox"><div class="askrow"><input id="askq" placeholder="What are you in the mood for? e.g. a documentary on Russia" value="${esc(a.q)}"><button class="primary" id="askGo">Ask</button><button id="askSurprise" title="Random pick">🎲</button></div>
+    <div class="chips">${ASK_EXAMPLES.map(x => `<button class="chip" data-askex="${esc(x)}">${esc(x)}</button>`).join('')}</div>
+    <div class="muted">${cfg.anthropicKey ? '✨ Using Claude — understands your request and can suggest new titles.' : 'Basic suggestions. Add a Claude API key in Settings for smarter, conversational suggestions and new ideas.'}</div></div>`;
+  if(a.busy) h += `<div class="doc muted">${a.mode === 'claude' ? 'Asking Claude…' : 'Looking through your lists…'}</div>`;
+  if(a.err) h += `<div class="doc" style="color:var(--danger)">${esc(a.err)}${a.mode === 'basic' ? ' — showing basic suggestions instead.' : ''}</div>`;
+  if(a.res && !a.busy){
+    h += `<p class="askintro">${esc(a.res.intro)}</p>`;
+    for(const p of a.res.picks){
+      const c0 = cache.get(p.path); if(!c0) continue;
+      const line = c0.text.split('\n')[p.i] || '', c = line.match(CHECK); if(!c) continue;
+      h += `<div class="card"><input type="checkbox" data-stoggle="${esc(p.path)}" data-ln="${p.i}" ${c[3] !== ' ' ? 'checked' : ''}>
+        <div class="cb">${p.ctx ? `<div class="ctx2">${esc(p.ctx)}</div>` : ''}<div class="t">${inline(c[4], p.path)}</div>${p.why ? `<div class="why">${esc(p.why)}</div>` : ''}
+        <a href="#" class="where" data-jump2="${esc(p.path)}" data-ln="${p.i}">${esc(p.path)} →</a></div></div>`;
+    }
+    if(a.res.ideas && a.res.ideas.length){
+      h += `<h3 class="ideash">New ideas, not in your lists yet</h3>`;
+      a.res.ideas.forEach((x, k) => {
+        h += `<div class="card idea"><div class="cb"><div class="t"><b>${esc(x.title)}</b></div><div class="why">${esc(x.why || '')}</div>
+          <button data-addidea="${k}">+ Add to ${esc(x.file)}${x.section ? ' › ' + esc(x.section) : ''}</button></div></div>`;
+      });
+    }
+  }
+  m.innerHTML = h;
+  const inp = $('askq'); if(inp && !a.busy && !a.res) inp.focus();
+}
+async function addIdea(k){
+  const x = askState.res.ideas[k]; const c0 = cache.get(x.file); if(!c0) return;
+  cur = {path: x.file, text: c0.text, sha: c0.sha};
+  const lines = L(); let hi = -1;
+  if(x.section){ hi = lines.findIndex(l => { const h = l.match(HEAD); return h && plain(h[2]).toLowerCase() === x.section.toLowerCase(); }); }
+  if(hi < 0) hi = lines.findIndex(l => /^##\s/.test(l));
+  if(hi < 0) return toast('Could not find a place to add it.', null, true);
+  const item = x.title.replace(/[\[\]]/g, '');
+  askState.res.ideas.splice(k, 1);
+  await commit(opAdd(lines[hi], occurrence(lines, hi), item, 'top'), `${name()}: add "${short(item)}" (suggested)`);
+}
+
 // ===== actions =====
 async function loadList(){ setBusy(true); try{ files = await listFiles(); }catch(e){ toast(e.message, null, true); } setBusy(false); }
 async function open(path, line){
@@ -576,9 +794,12 @@ const L = () => cur.text.split('\n');
 const name = () => title(cur.path) === 'Overview' ? (cur.path.split('/').slice(-2, -1)[0] || 'README') : title(cur.path);
 
 document.addEventListener('click', async e => {
-  const el = e.target.closest('[data-open],[data-more],[data-jump],[data-dir],[data-addat],[data-addgo],[data-edit],[data-save],[data-del],[data-cancel],button,a#reload');
+  const el = e.target.closest('[data-open],[data-askex],[data-jump2],[data-addidea],[data-more],[data-jump],[data-dir],[data-addat],[data-addgo],[data-edit],[data-save],[data-del],[data-cancel],button,a#reload');
   if(!el) return;
   if(el.dataset.open){ e.preventDefault(); return open(el.dataset.open); }
+  if(el.dataset.askex){ return runAsk(el.dataset.askex); }
+  if(el.dataset.jump2){ e.preventDefault(); return open(el.dataset.jump2, +el.dataset.ln); }
+  if(el.dataset.addidea !== undefined){ return addIdea(+el.dataset.addidea); }
   if(el.dataset.more){ e.preventDefault(); expanded.add(el.dataset.more); return render(); }
   if(el.dataset.jump){ if(e.target.closest('a, input')) return; return open(el.dataset.jump, +el.dataset.ln); }
   if(el.dataset.dir){ const d = el.dataset.dir; openDirs.has(d) ? openDirs.delete(d) : openDirs.add(d); saveOpen(); return renderNav(); }
@@ -604,13 +825,16 @@ document.addEventListener('click', async e => {
   }
   switch(el.id){
     case 'menuBtn': return $('nav').classList.toggle('open');
+    case 'askBtn': if(!ready()) return; view = 'ask'; askState = {q: '', busy: false, res: null, err: '', mode: ''}; return render();
+    case 'askGo': return runAsk($('askq').value);
+    case 'askSurprise': return runAsk(['a documentary', 'a film', 'a book', 'a podcast episode', 'a series'][Math.floor(Math.random() * 5)] + ' I haven\'t done yet');
     case 'closeSearch': e.preventDefault(); $('q').value = ''; query = ''; view = lastView; return render();
     case 'settingsBtn': view = 'settings'; return render();
     case 'closeSettings': view = 'file'; return render();
     case 'forget': cfg.token = ''; store(); files = []; cur = null; return render();
     case 'reload': e.preventDefault(); await loadList(); return open(cur.path);
     case 'saveSettings':
-      ['owner', 'repo', 'branch', 'token'].forEach(k => cfg[k] = $('s_' + k).value.trim());
+      ['owner', 'repo', 'branch', 'token', 'anthropicKey', 'anthropicModel'].forEach(k => cfg[k] = $('s_' + k).value.trim());
       cfg.branch = cfg.branch || 'main';
       if(!ready()) return toast('Owner, repo and token are required.', null, true);
       store(); view = 'file'; cur = null;
@@ -638,6 +862,7 @@ document.addEventListener('keydown', e => {
   if(e.key !== 'Enter') return;
   if(e.target.id === 'addText') document.querySelector('[data-addgo]').click();
   if(e.target.id === 'editText') document.querySelector('[data-save]').click();
+  if(e.target.id === 'askq') runAsk(e.target.value);
 });
 $('q').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(runSearch, 180); });
 $('q').addEventListener('focus', () => { if(ready() && !indexing && cache.size < files.length) ensureIndex(); });
