@@ -48,6 +48,10 @@ main{padding:20px;min-width:0}
 .row .tools button{border:none;background:none;padding:0 5px;color:var(--muted)}
 .bullet{width:16px;flex:none;text-align:center;color:var(--muted)}
 .p{padding:3px 4px;overflow-wrap:anywhere}
+.tbl{overflow-x:auto;margin:6px 0}
+table{border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:6px 12px;border-bottom:1px solid var(--line)}
+th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase}
 .addform{display:flex;gap:8px;margin:6px 0 10px;flex-wrap:wrap}
 .addform input{flex:1;min-width:200px}
 input,select{font:inherit;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);width:100%}
@@ -207,17 +211,17 @@ function resolveRel(href){
   return base.join('/');
 }
 function inline(s){
-  const out = []; let last = 0;
+  // swap links for placeholders, format the rest, then put links back (so **[x](y)** works)
+  const keep = [];
   const re = /\[((?:[^\[\]]|\[[^\]]*\])*)\]\(([^()\s]*(?:\([^()]*\)[^()\s]*)*)\)|(https?:\/\/[^\s<>)\]]+)/g;
-  let m;
-  while((m = re.exec(s))){
-    out.push(fmt(esc(s.slice(last, m.index))));
-    if(m[3]) out.push(`<a href="${esc(m[3])}" target="_blank" rel="noopener">${esc(m[3])}</a>`);
-    else out.push(link(m[2], inline(m[1])));
-    last = re.lastIndex;
-  }
-  out.push(fmt(esc(s.slice(last))));
-  return out.join('');
+  let t = s.replace(re, (m, label, href, bare) => {
+    let tail = '';
+    if(bare){ const m2 = bare.match(/[*.,;:!]+$/); if(m2){ tail = m2[0]; bare = bare.slice(0, -tail.length); } }
+    keep.push(bare ? `<a href="${esc(bare)}" target="_blank" rel="noopener">${esc(bare)}</a>` : link(href, inline(label)));
+    return `\u0000${keep.length - 1}\u0000` + tail;
+  });
+  t = fmt(esc(t));
+  return t.replace(/\u0000(\d+)\u0000/g, (_, i) => keep[+i]);
 }
 function link(href, label){
   if(/^https?:/i.test(href)) return `<a href="${esc(href)}" target="_blank" rel="noopener">${label}</a>`;
@@ -227,7 +231,7 @@ function link(href, label){
   const gh = `https://github.com/${cfg.owner}/${cfg.repo}/${/\.\w+$/.test(target) ? 'blob' : 'tree'}/${cfg.branch}/${encPath(target)}${anchor ? '#' + anchor : ''}`;
   return `<a href="${esc(gh)}" target="_blank" rel="noopener">${label}</a>`;
 }
-const fmt = s => s.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<i>$2</i>').replace(/`([^`]+)`/g, '<code>$1</code>');
+const fmt = s => s.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/__(.+?)__/g, '<b>$1</b>').replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<i>$2</i>').replace(/`([^`]+)`/g, '<code>$1</code>');
 const plain = s => s.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[*`]/g, '').replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
 const short = s => { s = plain(s) || 'item'; return s.length > 50 ? s.slice(0, 50) + '…' : s; };
 
@@ -241,7 +245,7 @@ function toast(msg, href, err){
 }
 function setBusy(b){ $('busy').style.display = b ? 'block' : 'none'; document.querySelectorAll('main button, main input[type=checkbox]').forEach(x => x.disabled = b); }
 const isHist = p => /(^|\/)history\//.test(p);
-const title = p => p.split('/').pop().replace(/\.md$/i, '').replace(/^README$/i, 'Overview').replace(/[-_]+/g, ' ');
+const title = p => { const t = p.split('/').pop().replace(/\.md$/i, '').replace(/^README$/i, 'Overview').replace(/[-_]+/g, ' '); return t.charAt(0).toUpperCase() + t.slice(1); };
 
 function renderNav(){
   const nav = $('nav');
@@ -281,6 +285,15 @@ function render(){
     if(/^\s*```/.test(l)){ inFence = !inFence; html += `<div class="p"><code>${esc(l)}</code></div>`; continue; }
     if(inFence){ html += `<div class="p"><code>${esc(l)}</code></div>`; continue; }
     if(!l.trim()){ skipIndent = -1; continue; }
+    if(/^\s*<!--.*-->\s*$/.test(l)) continue;
+    if(/^\s*\|/.test(l) && /^\s*\|?\s*:?-{2,}/.test(L[i + 1] || '')){
+      const cells = r => r.trim().replace(/^\||\|$/g, '').split(/(?<!\\)\|/).map(c => c.trim());
+      const head = cells(l); let rows = ''; i += 2;
+      while(i < L.length && /^\s*\|/.test(L[i])){ rows += '<tr>' + cells(L[i]).map(c => `<td>${inline(c)}</td>`).join('') + '</tr>'; i++; }
+      i--;
+      html += `<div class="tbl"><table><thead><tr>${head.map(c => `<th>${inline(c)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`;
+      continue;
+    }
     const ind = indentOf(l);
     if(skipIndent >= 0 && ind > skipIndent && !HEAD.test(l)) continue;
     skipIndent = -1;
