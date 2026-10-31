@@ -105,8 +105,6 @@ mark{background:#fff3a3;color:inherit;border-radius:3px;padding:0 1px}
 .card .ctx2{font-size:12px;color:var(--muted);margin-bottom:2px}
 .card .why{color:var(--muted);font-size:14px;margin-top:3px}
 .card .where{font-size:12px;display:inline-block;margin-top:4px}
-.card.idea button{margin-top:6px;font-size:13px}
-.ideash{font-size:15px;margin:18px 2px 8px}
 .help{font-size:13px;color:var(--muted);margin:4px 0 14px}
 .help code{font-size:12px}
 @media (max-width:800px){
@@ -147,6 +145,7 @@ mark{background:#fff3a3;color:inherit;border-radius:3px;padding:0 1px}
 const KEY = 'curiosityTracker.cfg';
 const DEFAULTS = {owner:'hlltarakci', repo:'my_small_world_of_curiosity_with_ai', branch:'main', token:'', hideDone:false};
 let cfg = Object.assign({}, DEFAULTS, loadJSON(KEY));
+delete cfg.anthropicKey; delete cfg.anthropicModel;
 let files = [];        // paths of .md files
 let cur = null;        // {path, text, sha}
 let view = 'file';     // file | settings
@@ -413,10 +412,7 @@ function renderSettings(m){
     <div><label>Branch</label><input id="s_branch" value="${esc(cfg.branch)}"></div>
     <div><label>Personal access token</label><input id="s_token" type="password" value="${esc(cfg.token)}" placeholder="github_pat_…"></div>
     <div class="muted">Create a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained token</a>
-      with access to this repo only and <b>Contents: Read and write</b>. It stays in this browser only.</div>
-    <div style="margin-top:8px"><label>Claude API key (optional, for ✨ Ask)</label><input id="s_anthropicKey" type="password" value="${esc(cfg.anthropicKey || '')}" placeholder="sk-ant-…"></div>
-    <div><label>Claude model</label><select id="s_anthropicModel">${['claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-opus-5-5'].map(x => `<option ${x === (cfg.anthropicModel || 'claude-sonnet-5-5') ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
-    <div class="muted">Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>. Each question is billed to your Anthropic account; Haiku is cheapest. The key stays in this browser only and is sent only to Anthropic. Without a key, Ask uses basic matching.</div></div>
+      with access to this repo only and <b>Contents: Read and write</b>. It stays in this browser only.</div></div>
     <div style="display:flex;gap:8px;margin-top:14px"><button class="primary" id="saveSettings">Save & connect</button>
     ${ready() ? '<button id="closeSettings">Cancel</button><button class="danger" id="forget">Forget token</button>' : ''}</div></div>`;
 }
@@ -684,55 +680,15 @@ function askLocal(q){
     picks.push(x); if(picks.length >= 8) break;
   }
   const what = [P.types.join(' / ') || 'anything', P.topics.length ? 'about ' + P.topics.join(', ') : '', P.terms.length ? '(' + P.terms.join(', ') + ')' : '', P.wantDone ? '— already done' : '— not done yet'].filter(Boolean).join(' ');
-  return {intro: picks.length ? `Looking for ${what}. Here are ${picks.length} from your lists:` : `I couldn't find ${what} in your lists. Try other words, or add a Claude API key in Settings for smarter suggestions.`,
-          picks: picks.map(x => ({path: x.it.path, i: x.it.i, ctx: x.it.parent || x.it.heading, why: x.why.length ? 'Matches: ' + [...new Set(x.why)].join(', ') : ''})), ideas: []};
-}
-
-async function askClaude(q){
-  const P = askParse(q); let items = askItems();
-  // keep the catalogue focused: preferred type first, then everything else, open items unless asked otherwise
-  const pref = items.filter(it => !P.types.length || P.types.some(t => (ASK_TYPES[t].also && ASK_TYPES[t].also(it)) || ASK_TYPES[t].paths.some(r => r.test(it.path))));
-  let pool = (pref.length ? pref : items).filter(it => P.wantDone || !it.done || /again|watched|read|done|finished|favou?rite/i.test(q));
-  if(pool.length > 700){
-    const loc = new Set(askLocal(q).picks.map(p => p.path + ':' + p.i));
-    const hay = it => norm([it.title, it.parent, it.heading, it.path].join(' '));
-    const qt = norm(q).split(/\s+/).filter(w => w.length > 2 && !ASK_STOP.has(w));
-    pool = pool.map(it => ({it, s: (loc.has(it.path + ':' + it.i) ? 10 : 0) + qt.filter(w => hay(it).includes(w)).length + Math.random()}))
-               .sort((a, b) => b.s - a.s).slice(0, 700).map(x => x.it);
-  }
-  const catalogue = pool.map(it => `${it.id}|${it.done ? 'done' : 'open'}|${it.path}|${it.heading}${it.parent ? ' › ' + it.parent : ''}|${it.title.slice(0, 140)}`).join('\n');
-  const headings = {};
-  for(const it of items){ (headings[it.path] = headings[it.path] || new Set()).add(it.heading.split(' › ').pop() || ''); }
-  const targets = Object.entries(headings).filter(([p]) => /^(watch|books|intellectual|podcasts|courses)\//.test(p) && !/meetups/.test(p))
-    .map(([p, hs]) => `${p}: ${[...hs].filter(Boolean).slice(0, 12).join(' | ')}`).join('\n');
-  const sys = `You recommend things from the user's personal tracker lists (documentaries, films, series, books, podcasts, courses, practice material). The user is learning Russian, likes history, politics, Russia/Soviet culture, Turkish history, sci-fi and self-development.
-Pick from the CATALOGUE (lines are id|status|file|section|title). Prefer "open" items unless the user asks for things already done. Pick items that truly fit the request; quality over quantity (3–8 picks).
-You may also suggest up to 3 well-known real titles NOT in the catalogue that fit; for each give the best target file and section from TARGETS so it can be added there. Only suggest real works you are confident exist; include year and creator.
-Reply with JSON only: {"intro": "one short sentence", "picks": [{"id": number, "why": "one short sentence"}], "ideas": [{"title": "Title, Year (Creator)", "why": "one short sentence", "file": "path", "section": "section name"}]}`;
-  const r = await fetch('https://api.anthropic.com/v1/messages', {method: 'POST', headers: {
-      'x-api-key': cfg.anthropicKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json', 'anthropic-dangerous-direct-browser-access': 'true'},
-    body: JSON.stringify({model: cfg.anthropicModel || 'claude-sonnet-5-5', max_tokens: 1500, system: sys,
-      messages: [{role: 'user', content: `REQUEST: ${q}\n\nTARGETS:\n${targets}\n\nCATALOGUE:\n${catalogue}`}]})});
-  if(!r.ok){ let m = r.status + ''; try{ m = (await r.json()).error.message; }catch(e){} throw new Error('Claude API: ' + m); }
-  const data = await r.json();
-  const txt = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
-  const j = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1));
-  const byId = new Map(items.map(it => [it.id, it]));
-  return {intro: j.intro || '', picks: (j.picks || []).map(p => byId.get(+p.id) && {path: byId.get(+p.id).path, i: byId.get(+p.id).i, ctx: byId.get(+p.id).parent || byId.get(+p.id).heading, why: p.why || ''}).filter(Boolean),
-          ideas: (j.ideas || []).filter(x => x && x.title && cache.has(x.file))};
+  return {intro: picks.length ? `Looking for ${what}. Here are ${picks.length} from your lists:` : `I couldn't find ${what} in your lists. Try other words.`,
+          picks: picks.map(x => ({path: x.it.path, i: x.it.i, ctx: x.it.parent || x.it.heading, why: x.why.length ? 'Matches: ' + [...new Set(x.why)].join(', ') : ''}))};
 }
 
 async function runAsk(q){
   q = (q || '').trim(); if(!q) return;
-  askState = {q, busy: true, res: null, err: '', mode: cfg.anthropicKey ? 'claude' : 'basic'};
+  askState = {q, busy: true, res: null, err: ''};
   view = 'ask'; render();
-  try{
-    await ensureIndex();
-    askState.res = askState.mode === 'claude' ? await askClaude(q) : askLocal(q);
-  }catch(e){
-    askState.err = e.message;
-    if(askState.mode === 'claude'){ askState.res = askLocal(q); askState.mode = 'basic'; }
-  }
+  try{ await ensureIndex(); askState.res = askLocal(q); }catch(e){ askState.err = e.message; }
   askState.busy = false; if(view === 'ask') render();
 }
 
@@ -741,9 +697,9 @@ function renderAsk(m){
   const a = askState;
   let h = `<div class="doc askbox"><div class="askrow"><input id="askq" placeholder="What are you in the mood for? e.g. a documentary on Russia" value="${esc(a.q)}"><button class="primary" id="askGo">Ask</button><button id="askSurprise" title="Random pick">🎲</button></div>
     <div class="chips">${ASK_EXAMPLES.map(x => `<button class="chip" data-askex="${esc(x)}">${esc(x)}</button>`).join('')}</div>
-    <div class="muted">${cfg.anthropicKey ? '✨ Using Claude — understands your request and can suggest new titles.' : 'Basic suggestions. Add a Claude API key in Settings for smarter, conversational suggestions and new ideas.'}</div></div>`;
-  if(a.busy) h += `<div class="doc muted">${a.mode === 'claude' ? 'Asking Claude…' : 'Looking through your lists…'}</div>`;
-  if(a.err) h += `<div class="doc" style="color:var(--danger)">${esc(a.err)}${a.mode === 'basic' ? ' — showing basic suggestions instead.' : ''}</div>`;
+    <div class="muted">Picks from your own lists. Understands type (documentary, film, series, book, podcast…), topic (Russia, WWII, Turkey, space…) and “haven’t watched” vs “again”.</div></div>`;
+  if(a.busy) h += `<div class="doc muted">Looking through your lists…</div>`;
+  if(a.err) h += `<div class="doc" style="color:var(--danger)">${esc(a.err)}</div>`;
   if(a.res && !a.busy){
     h += `<p class="askintro">${esc(a.res.intro)}</p>`;
     for(const p of a.res.picks){
@@ -753,27 +709,9 @@ function renderAsk(m){
         <div class="cb">${p.ctx ? `<div class="ctx2">${esc(p.ctx)}</div>` : ''}<div class="t">${inline(c[4], p.path)}</div>${p.why ? `<div class="why">${esc(p.why)}</div>` : ''}
         <a href="#" class="where" data-jump2="${esc(p.path)}" data-ln="${p.i}">${esc(p.path)} →</a></div></div>`;
     }
-    if(a.res.ideas && a.res.ideas.length){
-      h += `<h3 class="ideash">New ideas, not in your lists yet</h3>`;
-      a.res.ideas.forEach((x, k) => {
-        h += `<div class="card idea"><div class="cb"><div class="t"><b>${esc(x.title)}</b></div><div class="why">${esc(x.why || '')}</div>
-          <button data-addidea="${k}">+ Add to ${esc(x.file)}${x.section ? ' › ' + esc(x.section) : ''}</button></div></div>`;
-      });
-    }
   }
   m.innerHTML = h;
   const inp = $('askq'); if(inp && !a.busy && !a.res) inp.focus();
-}
-async function addIdea(k){
-  const x = askState.res.ideas[k]; const c0 = cache.get(x.file); if(!c0) return;
-  cur = {path: x.file, text: c0.text, sha: c0.sha};
-  const lines = L(); let hi = -1;
-  if(x.section){ hi = lines.findIndex(l => { const h = l.match(HEAD); return h && plain(h[2]).toLowerCase() === x.section.toLowerCase(); }); }
-  if(hi < 0) hi = lines.findIndex(l => /^##\s/.test(l));
-  if(hi < 0) return toast('Could not find a place to add it.', null, true);
-  const item = x.title.replace(/[\[\]]/g, '');
-  askState.res.ideas.splice(k, 1);
-  await commit(opAdd(lines[hi], occurrence(lines, hi), item, 'top'), `${name()}: add "${short(item)}" (suggested)`);
 }
 
 // ===== actions =====
@@ -794,12 +732,11 @@ const L = () => cur.text.split('\n');
 const name = () => title(cur.path) === 'Overview' ? (cur.path.split('/').slice(-2, -1)[0] || 'README') : title(cur.path);
 
 document.addEventListener('click', async e => {
-  const el = e.target.closest('[data-open],[data-askex],[data-jump2],[data-addidea],[data-more],[data-jump],[data-dir],[data-addat],[data-addgo],[data-edit],[data-save],[data-del],[data-cancel],button,a#reload');
+  const el = e.target.closest('[data-open],[data-askex],[data-jump2],[data-more],[data-jump],[data-dir],[data-addat],[data-addgo],[data-edit],[data-save],[data-del],[data-cancel],button,a#reload');
   if(!el) return;
   if(el.dataset.open){ e.preventDefault(); return open(el.dataset.open); }
   if(el.dataset.askex){ return runAsk(el.dataset.askex); }
   if(el.dataset.jump2){ e.preventDefault(); return open(el.dataset.jump2, +el.dataset.ln); }
-  if(el.dataset.addidea !== undefined){ return addIdea(+el.dataset.addidea); }
   if(el.dataset.more){ e.preventDefault(); expanded.add(el.dataset.more); return render(); }
   if(el.dataset.jump){ if(e.target.closest('a, input')) return; return open(el.dataset.jump, +el.dataset.ln); }
   if(el.dataset.dir){ const d = el.dataset.dir; openDirs.has(d) ? openDirs.delete(d) : openDirs.add(d); saveOpen(); return renderNav(); }
@@ -834,7 +771,7 @@ document.addEventListener('click', async e => {
     case 'forget': cfg.token = ''; store(); files = []; cur = null; return render();
     case 'reload': e.preventDefault(); await loadList(); return open(cur.path);
     case 'saveSettings':
-      ['owner', 'repo', 'branch', 'token', 'anthropicKey', 'anthropicModel'].forEach(k => cfg[k] = $('s_' + k).value.trim());
+      ['owner', 'repo', 'branch', 'token'].forEach(k => cfg[k] = $('s_' + k).value.trim());
       cfg.branch = cfg.branch || 'main';
       if(!ready()) return toast('Owner, repo and token are required.', null, true);
       store(); view = 'file'; cur = null;
