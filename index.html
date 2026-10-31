@@ -182,7 +182,7 @@ async function putFile(path, text, sha, message){
 }
 
 // ===== markdown model =====
-const CHECK = /^(\s*)([-*+]) \[( |x|X)\] (.*)$/;
+const CHECK = /^(\s*)([-*+])\s+\[( |x|X)\]\s+(.*)$/;
 const BULLET = /^(\s*)([-*+]|\d+\.) (.*)$/;
 const HEAD = /^(#{1,6})\s+(.*)$/;
 const indentOf = l => l.match(/^\s*/)[0].replace(/\t/g, '    ').length;
