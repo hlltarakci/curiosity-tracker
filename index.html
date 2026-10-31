@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My Small World of Curiosity — Tracker</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--text:#1d2329;--muted:#66707a;--line:#e3e6ea;--accent:#1f883d;--hover:#f0f2f4;--danger:#cf222e;--link:#0969da}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1216;--card:#171b21;--text:#e6e9ec;--muted:#8b949e;--line:#2a3038;--accent:#2ea043;--hover:#1f252c;--danger:#f85149;--link:#58a6ff}}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text)}
+a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
+header{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--card);position:sticky;top:0;z-index:5}
+header h1{font-size:16px;margin:0;white-space:nowrap}
+#menuBtn{display:none}
+.spacer{flex:1}
+button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:8px;padding:6px 11px;cursor:pointer}
+button:hover{background:var(--hover)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.danger{color:var(--danger)}
+button:disabled{opacity:.5;cursor:default}
+.layout{display:grid;grid-template-columns:270px 1fr;max-width:1200px;margin:0 auto}
+nav{border-right:1px solid var(--line);height:calc(100vh - 53px);overflow:auto;position:sticky;top:53px;padding:12px}
+nav input{margin-bottom:8px}
+nav .grp{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:12px 6px 4px}
+nav .f{padding:5px 8px;border-radius:7px;cursor:pointer;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+nav .f:hover{background:var(--hover)}
+nav .f.active{background:var(--card);border:1px solid var(--line);font-weight:600}
+nav .f.hist{color:var(--muted)}
+main{padding:20px;min-width:0}
+.bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.bar .path{color:var(--muted);font-size:13px}
+.bar .links{margin-left:auto;font-size:13px;display:flex;gap:12px;align-items:center}
+.stats{font-size:13px;color:var(--muted)}
+.doc{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 18px}
+.h{margin:18px 0 6px;display:flex;align-items:center;gap:8px}
+.h:first-child{margin-top:4px}
+.h1{font-size:21px}.h2{font-size:17px}.h3,.h4,.h5,.h6{font-size:15px}
+.h .add{opacity:0;font-size:12px;padding:2px 8px}
+.h:hover .add,.h .add:focus{opacity:1}
+.row{display:flex;align-items:flex-start;gap:8px;padding:3px 4px;border-radius:6px}
+.row:hover{background:var(--hover)}
+.row input[type=checkbox]{margin-top:4px;width:16px;height:16px;flex:none;cursor:pointer}
+.row .t{flex:1;min-width:0;overflow-wrap:anywhere}
+.row.done>.t{color:var(--muted)}
+.row .tools{opacity:0;display:flex;gap:2px}
+.row:hover .tools{opacity:1}
+.row .tools button{border:none;background:none;padding:0 5px;color:var(--muted)}
+.bullet{width:16px;flex:none;text-align:center;color:var(--muted)}
+.p{padding:3px 4px;overflow-wrap:anywhere}
+.addform{display:flex;gap:8px;margin:6px 0 10px;flex-wrap:wrap}
+.addform input{flex:1;min-width:200px}
+input,select{font:inherit;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);width:100%}
+select{width:auto}
+label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+.stack{display:grid;gap:12px;max-width:460px}
+.muted{color:var(--muted);font-size:13px}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:10px 16px;border-radius:10px;font-size:14px;display:none;z-index:10;max-width:90vw}
+.toast a{color:inherit;font-weight:600;margin-left:8px}
+.toast.err{background:var(--danger);color:#fff}
+.busy{position:fixed;top:0;left:0;height:3px;background:var(--accent);width:100%;animation:b 1s linear infinite;display:none;z-index:20}
+@keyframes b{0%{opacity:.3}50%{opacity:1}100%{opacity:.3}}
+code{background:var(--hover);padding:1px 5px;border-radius:5px;font-size:13px}
+.switch{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);cursor:pointer}
+.switch input{width:auto}
+@media (max-width:800px){
+  .layout{grid-template-columns:1fr}
+  #menuBtn{display:inline-block}
+  nav{display:none;position:fixed;inset:53px 0 0 0;background:var(--bg);z-index:6;height:auto;border:none}
+  nav.open{display:block}
+  main{padding:12px}
+  .row .tools{opacity:1}
+  .h .add{opacity:1}
+}
+</style>
+</head>
+<body>
+<div class="busy" id="busy"></div>
+<header>
+  <button id="menuBtn">☰</button>
+  <h1>Curiosity Tracker</h1>
+  <span class="spacer"></span>
+  <button id="settingsBtn">Settings</button>
+</header>
+<div class="layout">
+  <nav id="nav"></nav>
+  <main id="main"></main>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ===== config & state =====
+const KEY = 'curiosityTracker.cfg';
+const DEFAULTS = {owner:'hlltarakci', repo:'my_small_world_of_curiosity_with_ai', branch:'main', token:'', hideDone:false};
+let cfg = Object.assign({}, DEFAULTS, loadJSON(KEY));
+let files = [];        // paths of .md files
+let cur = null;        // {path, text, sha}
+let view = 'file';     // file | settings
+let addAt = null;      // heading line index with open add form
+let editAt = null;     // line index being edited
+let filter = '';
+
+function loadJSON(k){ try{ return JSON.parse(localStorage.getItem(k)) || {}; }catch(e){ return {}; } }
+function store(){ try{ localStorage.setItem(KEY, JSON.stringify(cfg)); }catch(e){} }
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ready = () => cfg.owner && cfg.repo && cfg.token;
+
+// ===== GitHub API =====
+const encPath = p => p.split('/').map(encodeURIComponent).join('/');
+const repoUrl = () => `/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}`;
+async function gh(path, opts = {}){
+  const r = await fetch('https://api.github.com' + path, {...opts, cache:'no-store', headers:{
+    Authorization:'Bearer ' + cfg.token, Accept:'application/vnd.github+json', 'X-GitHub-Api-Version':'2022-11-28',
+    ...(opts.body ? {'Content-Type':'application/json'} : {})}});
+  if(!r.ok){
+    let msg = r.status + ''; try{ msg = (await r.json()).message || msg; }catch(e){}
+    const e = new Error(r.status === 401 ? 'Token rejected. Check Settings.' : r.status === 404 ? 'Not found (check repo name and token access).' : 'GitHub: ' + msg);
+    e.status = r.status; throw e;
+  }
+  return r.json();
+}
+const b64enc = s => { const b = new TextEncoder().encode(s); let x = ''; for(let i = 0; i < b.length; i += 0x8000) x += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return btoa(x); };
+const b64dec = s => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\s/g, '')), c => c.charCodeAt(0)));
+async function listFiles(){
+  const t = await gh(`${repoUrl()}/git/trees/${encodeURIComponent(cfg.branch)}?recursive=1`);
+  return t.tree.filter(i => i.type === 'blob' && /\.md$/i.test(i.path)).map(i => i.path);
+}
+async function getFile(path){
+  const f = await gh(`${repoUrl()}/contents/${encPath(path)}?ref=${encodeURIComponent(cfg.branch)}`);
+  if(f.content === '' && f.size > 0){            // > 1 MB: fetch blob
+    const b = await gh(`${repoUrl()}/git/blobs/${f.sha}`); return {text: b64dec(b.content), sha: f.sha};
+  }
+  return {text: b64dec(f.content), sha: f.sha};
+}
+async function putFile(path, text, sha, message){
+  return gh(`${repoUrl()}/contents/${encPath(path)}`, {method:'PUT', body: JSON.stringify({message, content: b64enc(text), sha, branch: cfg.branch})});
+}
+
+// ===== markdown model =====
+const CHECK = /^(\s*)([-*+]) \[( |x|X)\] (.*)$/;
+const BULLET = /^(\s*)([-*+]|\d+\.) (.*)$/;
+const HEAD = /^(#{1,6})\s+(.*)$/;
+const indentOf = l => l.match(/^\s*/)[0].replace(/\t/g, '    ').length;
+
+// Ops find their line by content (+ occurrence), so they survive edits made elsewhere.
+function locate(L, line, occ){
+  let n = -1;
+  for(let i = 0; i < L.length; i++) if(L[i] === line && ++n === occ) return i;
+  throw new Error('That line changed on GitHub. Reloaded — try again.');
+}
+function occurrence(L, idx){ let n = 0; for(let i = 0; i < idx; i++) if(L[i] === L[idx]) n++; return n; }
+const opSet = (line, occ, newLine) => text => {
+  const L = text.split('\n'), i = locate(L, line, occ);
+  if(newLine == null){             // delete line and its nested children
+    const ind = indentOf(L[i]); let e = i + 1;
+    while(e < L.length && L[e].trim() !== '' && indentOf(L[e]) > ind && !HEAD.test(L[e])) e++;
+    L.splice(i, e - i);
+  } else L[i] = newLine;
+  return L.join('\n');
+};
+const opAdd = (head, occ, item, where) => text => {
+  const L = text.split('\n');
+  let h = head == null ? -1 : locate(L, head, occ);
+  const level = h >= 0 ? L[h].match(HEAD)[1].length : 0;
+  let end = h + 1;
+  while(end < L.length){ const m = L[end].match(HEAD); if(m && (h < 0 || m[1].length <= level)) break; end++; }
+  const line = '- [ ] ' + item.replace(/\r?\n/g, ' ');
+  if(where === 'top'){
+    let i = h + 1;
+    while(i < end && !CHECK.test(L[i]) && !BULLET.test(L[i])) i++;
+    if(i === end){ i = h + 1; }
+    L.splice(i, 0, line);
+  } else {
+    let i = end; while(i > h + 1 && L[i - 1].trim() === '') i--;
+    L.splice(i, 0, line);
+  }
+  return L.join('\n');
+};
+
+async function commit(op, message){
+  setBusy(true);
+  try{
+    let text = op(cur.text), res;
+    try{ res = await putFile(cur.path, text, cur.sha, message); }
+    catch(e){
+      if(e.status !== 409 && e.status !== 422) throw e;   // changed elsewhere: reload, re-apply once
+      Object.assign(cur, await getFile(cur.path));
+      text = op(cur.text);
+      res = await putFile(cur.path, text, cur.sha, message);
+    }
+    cur.text = text; cur.sha = res.content.sha; addAt = editAt = null;
+    toast('Committed', res.commit.html_url);
+  }catch(e){
+    toast(e.message, null, true);
+    if(/changed on GitHub/.test(e.message)){ try{ Object.assign(cur, await getFile(cur.path)); }catch(_){} }
+  }
+  setBusy(false); render();
+}
+
+// ===== inline markdown =====
+function resolveRel(href){
+  const base = cur.path.split('/').slice(0, -1);
+  for(const part of decodeURIComponent(href).split('/')){
+    if(part === '..') base.pop(); else if(part && part !== '.') base.push(part);
+  }
+  return base.join('/');
+}
+function inline(s){
+  const out = []; let last = 0;
+  const re = /\[((?:[^\[\]]|\[[^\]]*\])*)\]\(([^()\s]*(?:\([^()]*\)[^()\s]*)*)\)|(https?:\/\/[^\s<>)\]]+)/g;
+  let m;
+  while((m = re.exec(s))){
+    out.push(fmt(esc(s.slice(last, m.index))));
+    if(m[3]) out.push(`<a href="${esc(m[3])}" target="_blank" rel="noopener">${esc(m[3])}</a>`);
+    else out.push(link(m[2], inline(m[1])));
+    last = re.lastIndex;
+  }
+  out.push(fmt(esc(s.slice(last))));
+  return out.join('');
+}
+function link(href, label){
+  if(/^https?:/i.test(href)) return `<a href="${esc(href)}" target="_blank" rel="noopener">${label}</a>`;
+  const [p, anchor] = href.split('#'); const target = resolveRel(p);
+  if(/\.md$/i.test(target) && files.includes(target)) return `<a href="#" data-open="${esc(target)}">${label}</a>`;
+  if(target && files.includes(target + '/README.md')) return `<a href="#" data-open="${esc(target + '/README.md')}">${label}</a>`;
+  const gh = `https://github.com/${cfg.owner}/${cfg.repo}/${/\.\w+$/.test(target) ? 'blob' : 'tree'}/${cfg.branch}/${encPath(target)}${anchor ? '#' + anchor : ''}`;
+  return `<a href="${esc(gh)}" target="_blank" rel="noopener">${label}</a>`;
+}
+const fmt = s => s.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<i>$2</i>').replace(/`([^`]+)`/g, '<code>$1</code>');
+const plain = s => s.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[*`]/g, '').replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
+const short = s => { s = plain(s) || 'item'; return s.length > 50 ? s.slice(0, 50) + '…' : s; };
+
+// ===== rendering =====
+let toastTimer;
+function toast(msg, href, err){
+  const t = $('toast');
+  t.innerHTML = esc(msg) + (href ? `<a href="${esc(href)}" target="_blank" rel="noopener">View commit</a>` : '');
+  t.className = 'toast' + (err ? ' err' : ''); t.style.display = 'block';
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.style.display = 'none', err ? 7000 : 3000);
+}
+function setBusy(b){ $('busy').style.display = b ? 'block' : 'none'; document.querySelectorAll('main button, main input[type=checkbox]').forEach(x => x.disabled = b); }
+const isHist = p => /(^|\/)history\//.test(p);
+const title = p => p.split('/').pop().replace(/\.md$/i, '').replace(/^README$/i, 'Overview').replace(/[-_]+/g, ' ');
+
+function renderNav(){
+  const nav = $('nav');
+  if(!ready()){ nav.innerHTML = ''; return; }
+  const q = filter.toLowerCase();
+  const groups = {};
+  files.filter(p => !q || p.toLowerCase().includes(q)).forEach(p => {
+    const parts = p.split('/'); const g = parts.length > 1 ? parts.slice(0, -1).join(' / ') : 'Home';
+    (groups[g] = groups[g] || []).push(p);
+  });
+  const order = Object.keys(groups).sort((a, b) => (a === 'Home' ? -1 : b === 'Home' ? 1 : (/(^| \/ )history$/.test(a) - /(^| \/ )history$/.test(b)) || a.localeCompare(b)));
+  nav.innerHTML = `<input id="search" placeholder="Find a file…" value="${esc(filter)}">` + order.map(g =>
+    `<div class="grp">${esc(g)}</div>` + groups[g].sort((a, b) => /README\.md$/.test(b) - /README\.md$/.test(a) || a.localeCompare(b)).map(p =>
+      `<div class="f ${cur && cur.path === p ? 'active' : ''} ${isHist(p) ? 'hist' : ''}" data-open="${esc(p)}" title="${esc(p)}">${esc(title(p))}</div>`).join('')
+  ).join('');
+  const s = $('search'); s.oninput = e => { filter = e.target.value; renderNav(); const n = $('search'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); };
+}
+
+function render(){
+  renderNav();
+  const m = $('main');
+  if(view === 'settings' || !ready()) return renderSettings(m);
+  if(!cur){ m.innerHTML = '<div class="doc muted">Pick a file on the left.</div>'; return; }
+  const L = cur.text.split('\n');
+  let open = 0, done = 0;
+  L.forEach(l => { const c = l.match(CHECK); if(c) c[3] === ' ' ? open++ : done++; });
+  const gh = `https://github.com/${cfg.owner}/${cfg.repo}`;
+  let html = `<div class="bar"><span class="path">${esc(cur.path)}</span><span class="stats">${open} open · ${done} done</span>
+    <span class="links"><label class="switch"><input type="checkbox" id="hideDone" ${cfg.hideDone ? 'checked' : ''}>Hide done</label>
+    <a href="${gh}/blob/${cfg.branch}/${encPath(cur.path)}" target="_blank" rel="noopener">GitHub</a>
+    <a href="${gh}/commits/${cfg.branch}/${encPath(cur.path)}" target="_blank" rel="noopener">History</a>
+    <a href="#" id="reload">Reload</a></span></div><div class="doc">`;
+  html += addForm(-1, true);
+  let skipIndent = -1, inFence = false;
+  for(let i = 0; i < L.length; i++){
+    const l = L[i];
+    if(/^\s*```/.test(l)){ inFence = !inFence; html += `<div class="p"><code>${esc(l)}</code></div>`; continue; }
+    if(inFence){ html += `<div class="p"><code>${esc(l)}</code></div>`; continue; }
+    if(!l.trim()){ skipIndent = -1; continue; }
+    const ind = indentOf(l);
+    if(skipIndent >= 0 && ind > skipIndent && !HEAD.test(l)) continue;
+    skipIndent = -1;
+    const h = l.match(HEAD), c = l.match(CHECK), b = l.match(BULLET);
+    if(h){
+      const lv = h[1].length;
+      html += `<div class="h h${lv}">${inline(h[2])}<button class="add" data-addat="${i}">+ Add</button></div>` + addForm(i);
+    } else if(c){
+      const isDone = c[3] !== ' ';
+      if(isDone && cfg.hideDone){ skipIndent = ind; continue; }
+      const pad = ind * 7;
+      if(editAt === i){
+        html += `<div class="addform" style="margin-left:${pad}px"><input id="editText" value="${esc(c[4])}"><button class="primary" data-save="${i}">Save</button><button data-cancel>Cancel</button><button class="danger" data-del="${i}">Delete</button></div>`;
+      } else {
+        html += `<div class="row ${isDone ? 'done' : ''}" style="margin-left:${pad}px"><input type="checkbox" data-toggle="${i}" ${isDone ? 'checked' : ''}>
+          <span class="t">${inline(c[4])}</span><span class="tools"><button data-edit="${i}" title="Edit">✎</button></span></div>`;
+      }
+    } else if(b){
+      html += `<div class="row" style="margin-left:${ind * 7}px"><span class="bullet">•</span><span class="t">${inline(b[3])}</span></div>`;
+    } else if(/^\s*<img\b/i.test(l) || /^\s*<\/?\w+[^>]*>\s*$/.test(l)){
+      continue;
+    } else {
+      html += `<div class="p">${inline(l.trim())}</div>`;
+    }
+  }
+  m.innerHTML = html + '</div>';
+  const inp = $('addText') || $('editText'); if(inp) inp.focus();
+}
+function addForm(i, top){
+  if(addAt !== i) return top ? '' : '';
+  return `<div class="addform"><input id="addText" placeholder="New item (markdown links ok)"><select id="addWhere"><option value="bottom">at bottom</option><option value="top">at top</option></select>
+    <button class="primary" data-addgo="${i}">Add</button><button data-cancel>Cancel</button></div>`;
+}
+
+function renderSettings(m){
+  m.innerHTML = `<div class="doc"><h2 style="margin-top:0">Connect your repo</h2><div class="stack">
+    <div><label>Owner</label><input id="s_owner" value="${esc(cfg.owner)}"></div>
+    <div><label>Repository</label><input id="s_repo" value="${esc(cfg.repo)}"></div>
+    <div><label>Branch</label><input id="s_branch" value="${esc(cfg.branch)}"></div>
+    <div><label>Personal access token</label><input id="s_token" type="password" value="${esc(cfg.token)}" placeholder="github_pat_…"></div>
+    <div class="muted">Create a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained token</a>
+      with access to this repo only and <b>Contents: Read and write</b>. It stays in this browser only.</div></div>
+    <div style="display:flex;gap:8px;margin-top:14px"><button class="primary" id="saveSettings">Save & connect</button>
+    ${ready() ? '<button id="closeSettings">Cancel</button><button class="danger" id="forget">Forget token</button>' : ''}</div></div>`;
+}
+
+// ===== actions =====
+async function loadList(){ setBusy(true); try{ files = await listFiles(); }catch(e){ toast(e.message, null, true); } setBusy(false); }
+async function open(path){
+  setBusy(true); addAt = editAt = null; view = 'file';
+  try{ cur = {path, ...(await getFile(path))}; try{ localStorage.setItem(KEY + '.last', path); }catch(e){} location.hash = ''; }
+  catch(e){ toast(e.message, null, true); }
+  setBusy(false); $('nav').classList.remove('open'); render(); window.scrollTo(0, 0);
+}
+const L = () => cur.text.split('\n');
+const name = () => title(cur.path) === 'Overview' ? (cur.path.split('/').slice(-2, -1)[0] || 'README') : title(cur.path);
+
+document.addEventListener('click', async e => {
+  const el = e.target.closest('[data-open],[data-addat],[data-addgo],[data-edit],[data-save],[data-del],[data-cancel],button,a#reload');
+  if(!el) return;
+  if(el.dataset.open){ e.preventDefault(); return open(el.dataset.open); }
+  if(el.dataset.addat !== undefined){ addAt = +el.dataset.addat; editAt = null; return render(); }
+  if(el.dataset.cancel !== undefined){ addAt = editAt = null; return render(); }
+  if(el.dataset.edit !== undefined){ editAt = +el.dataset.edit; addAt = null; return render(); }
+  if(el.dataset.addgo !== undefined){
+    const v = $('addText').value.trim(); if(!v) return;
+    const i = +el.dataset.addgo, lines = L();
+    const head = i >= 0 ? lines[i] : null, occ = i >= 0 ? occurrence(lines, i) : 0;
+    const under = i >= 0 ? ' under ' + short(lines[i].replace(HEAD, '$2')) : '';
+    return commit(opAdd(head, occ, v, $('addWhere').value), `${name()}: add "${short(v)}"${under}`);
+  }
+  if(el.dataset.save !== undefined){
+    const i = +el.dataset.save, lines = L(), c = lines[i].match(CHECK), v = $('editText').value.trim();
+    if(!v) return;
+    return commit(opSet(lines[i], occurrence(lines, i), `${c[1]}${c[2]} [${c[3]}] ${v}`), `${name()}: edit "${short(v)}"`);
+  }
+  if(el.dataset.del !== undefined){
+    if(!el.dataset.sure){ el.dataset.sure = 1; el.textContent = 'Tap again to delete'; return; }
+    const i = +el.dataset.del, lines = L();
+    return commit(opSet(lines[i], occurrence(lines, i), null), `${name()}: delete "${short(lines[i].match(CHECK)[4])}"`);
+  }
+  switch(el.id){
+    case 'menuBtn': return $('nav').classList.toggle('open');
+    case 'settingsBtn': view = 'settings'; return render();
+    case 'closeSettings': view = 'file'; return render();
+    case 'forget': cfg.token = ''; store(); files = []; cur = null; return render();
+    case 'reload': e.preventDefault(); await loadList(); return open(cur.path);
+    case 'saveSettings':
+      ['owner', 'repo', 'branch', 'token'].forEach(k => cfg[k] = $('s_' + k).value.trim());
+      cfg.branch = cfg.branch || 'main';
+      if(!ready()) return toast('Owner, repo and token are required.', null, true);
+      store(); view = 'file'; cur = null;
+      await loadList(); if(!files.length){ view = 'settings'; return render(); }
+      toast('Connected'); return open(files.includes('README.md') ? 'README.md' : files[0]);
+  }
+});
+document.addEventListener('change', e => {
+  if(e.target.id === 'hideDone'){ cfg.hideDone = e.target.checked; store(); return render(); }
+  const t = e.target.dataset && e.target.dataset.toggle; if(t === undefined) return;
+  const i = +t, lines = L(), c = lines[i].match(CHECK), nowDone = c[3] === ' ';
+  commit(opSet(lines[i], occurrence(lines, i), `${c[1]}${c[2]} [${nowDone ? 'x' : ' '}] ${c[4]}`), `${name()}: ${nowDone ? '✔' : 'reopen'} "${short(c[4])}"`);
+});
+document.addEventListener('keydown', e => {
+  if(e.key === 'Escape'){ addAt = editAt = null; render(); }
+  if(e.key !== 'Enter') return;
+  if(e.target.id === 'addText') document.querySelector('[data-addgo]').click();
+  if(e.target.id === 'editText') document.querySelector('[data-save]').click();
+});
+// Re-sync when you come back to the tab (picks up edits made directly on GitHub)
+document.addEventListener('visibilitychange', async () => {
+  if(document.hidden || !cur || addAt !== null || editAt !== null) return;
+  try{ const f = await getFile(cur.path); if(f.sha !== cur.sha){ Object.assign(cur, f); render(); toast('Updated from GitHub'); } }catch(e){}
+});
+
+(async () => {
+  if(!ready()) return render();
+  await loadList();
+  let last = null; try{ last = localStorage.getItem(KEY + '.last'); }catch(e){}
+  if(files.length) return open(files.includes(last) ? last : (files.includes('README.md') ? 'README.md' : files[0]));
+  render();
+})();
+</script>
+</body>
+</html>
