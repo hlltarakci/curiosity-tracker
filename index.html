@@ -74,6 +74,27 @@ label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
 code{background:var(--hover);padding:1px 5px;border-radius:5px;font-size:13px}
 .switch{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);cursor:pointer}
 .switch input{width:auto}
+.sm{display:none}
+.qwrap{position:relative;flex:1;max-width:560px;margin-left:12px}
+.qwrap input{padding-right:44px}
+.qwrap input:not(:placeholder-shown)+kbd{display:none}
+.qwrap kbd{position:absolute;right:8px;top:50%;transform:translateY(-50%);font:12px ui-monospace,monospace;color:var(--muted);border:1px solid var(--line);border-radius:5px;padding:1px 5px;pointer-events:none}
+.sres{background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:12px;overflow:hidden}
+.sres .fh{display:flex;gap:8px;align-items:baseline;padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer;background:var(--hover)}
+.sres .fh b{font-size:15px}
+.sres .hit{display:flex;gap:8px;align-items:flex-start;padding:8px 14px;border-bottom:1px solid var(--line);cursor:pointer}
+.sres .hit:last-child{border-bottom:none}
+.sres .hit:hover{background:var(--hover)}
+.sres .hit input{margin-top:4px;width:16px;height:16px;flex:none}
+.sres .hit .ctx{display:block;font-size:12px;color:var(--muted);margin-top:2px}
+.sres .hit.done .t{color:var(--muted)}
+.sres .more{padding:8px 14px;font-size:13px}
+mark{background:#fff3a3;color:inherit;border-radius:3px;padding:0 1px}
+@media (prefers-color-scheme:dark){mark{background:#6b5b00}}
+.flash{animation:fl 2s ease-out}
+@keyframes fl{0%,40%{background:#fff3a3}100%{background:transparent}}
+.help{font-size:13px;color:var(--muted);margin:4px 0 14px}
+.help code{font-size:12px}
 @media (max-width:800px){
   .layout{grid-template-columns:1fr}
   #menuBtn{display:inline-block}
@@ -82,6 +103,12 @@ code{background:var(--hover);padding:1px 5px;border-radius:5px;font-size:13px}
   main{padding:12px}
   .row .tools{opacity:1}
   .h .add{opacity:1}
+  header h1{display:none}
+  .lg{display:none}
+  .sm{display:inline}
+  .qwrap{margin-left:0;max-width:none}
+  .spacer{display:none}
+  .qwrap kbd{display:none}
 }
 </style>
 </head>
@@ -90,8 +117,9 @@ code{background:var(--hover);padding:1px 5px;border-radius:5px;font-size:13px}
 <header>
   <button id="menuBtn">☰</button>
   <h1>Curiosity Tracker</h1>
+  <div class="qwrap"><input id="q" type="search" placeholder="Search everything…" autocomplete="off"><kbd id="kbdHint">⌘K</kbd></div>
   <span class="spacer"></span>
-  <button id="settingsBtn">Settings</button>
+  <button id="settingsBtn" title="Settings"><span class="lg">Settings</span><span class="sm">⚙</span></button>
 </header>
 <div class="layout">
   <nav id="nav"></nav>
@@ -110,6 +138,9 @@ let view = 'file';     // file | settings
 let addAt = null;      // heading line index with open add form
 let editAt = null;     // line index being edited
 let filter = '';
+let fileSha = {};       // path -> blob sha (from tree)
+let jumpLine = null;     // line to scroll to after opening
+let query = '', lastView = 'file';
 
 function loadJSON(k){ try{ return JSON.parse(localStorage.getItem(k)) || {}; }catch(e){ return {}; } }
 function store(){ try{ localStorage.setItem(KEY, JSON.stringify(cfg)); }catch(e){} }
@@ -135,7 +166,9 @@ const b64enc = s => { const b = new TextEncoder().encode(s); let x = ''; for(let
 const b64dec = s => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\s/g, '')), c => c.charCodeAt(0)));
 async function listFiles(){
   const t = await gh(`${repoUrl()}/git/trees/${encodeURIComponent(cfg.branch)}?recursive=1`);
-  return t.tree.filter(i => i.type === 'blob' && /\.md$/i.test(i.path)).map(i => i.path);
+  const md = t.tree.filter(i => i.type === 'blob' && /\.md$/i.test(i.path));
+  fileSha = Object.fromEntries(md.map(i => [i.path, i.sha])); treeAt = Date.now();
+  return md.map(i => i.path);
 }
 async function getFile(path){
   const f = await gh(`${repoUrl()}/contents/${encPath(path)}?ref=${encodeURIComponent(cfg.branch)}`);
@@ -201,6 +234,7 @@ async function commit(op, message){
       res = await putFile(cur.path, text, cur.sha, message);
     }
     cur.text = text; cur.sha = res.content.sha; addAt = editAt = null;
+    fileSha[cur.path] = cur.sha; cache.set(cur.path, {sha: cur.sha, text}); idbPut(cur.sha, text);
     toast('Committed', res.commit.html_url);
   }catch(e){
     toast(e.message, null, true);
@@ -210,14 +244,16 @@ async function commit(op, message){
 }
 
 // ===== inline markdown =====
+let linkBase = null;
 function resolveRel(href){
-  const base = cur.path.split('/').slice(0, -1);
+  const base = (linkBase || cur.path).split('/').slice(0, -1);
   for(const part of decodeURIComponent(href).split('/')){
     if(part === '..') base.pop(); else if(part && part !== '.') base.push(part);
   }
   return base.join('/');
 }
-function inline(s){
+function inline(s, base){
+  if(base !== undefined){ const prev = linkBase; linkBase = base; try{ return inline(s); } finally { linkBase = prev; } }
   // swap links for placeholders, format the rest, then put links back (so **[x](y)** works)
   const keep = [];
   const re = /\[((?:[^\[\]]|\[[^\]]*\])*)\]\(([^()\s]*(?:\([^()]*\)[^()\s]*)*)\)|(https?:\/\/[^\s<>)\]]+)/g;
@@ -293,6 +329,7 @@ function render(){
   renderNav();
   const m = $('main');
   if(view === 'settings' || !ready()) return renderSettings(m);
+  if(view === 'search') return renderSearch(m);
   if(!cur){ m.innerHTML = '<div class="doc muted">Pick a file on the left.</div>'; return; }
   const L = cur.text.split('\n');
   let open = 0, done = 0;
@@ -325,23 +362,23 @@ function render(){
     const h = l.match(HEAD), c = l.match(CHECK), b = l.match(BULLET);
     if(h){
       const lv = h[1].length;
-      html += `<div class="h h${lv}">${inline(h[2])}<button class="add" data-addat="${i}">+ Add</button></div>` + addForm(i);
+      html += `<div class="h h${lv}" data-line="${i}">${inline(h[2])}<button class="add" data-addat="${i}">+ Add</button></div>` + addForm(i);
     } else if(c){
       const isDone = c[3] !== ' ';
-      if(isDone && cfg.hideDone){ skipIndent = ind; continue; }
+      if(isDone && cfg.hideDone && i !== jumpLine){ skipIndent = ind; continue; }
       const pad = ind * 7;
       if(editAt === i){
         html += `<div class="addform" style="margin-left:${pad}px"><input id="editText" value="${esc(c[4])}"><button class="primary" data-save="${i}">Save</button><button data-cancel>Cancel</button><button class="danger" data-del="${i}">Delete</button></div>`;
       } else {
-        html += `<div class="row ${isDone ? 'done' : ''}" style="margin-left:${pad}px"><input type="checkbox" data-toggle="${i}" ${isDone ? 'checked' : ''}>
+        html += `<div class="row ${isDone ? 'done' : ''}" data-line="${i}" style="margin-left:${pad}px"><input type="checkbox" data-toggle="${i}" ${isDone ? 'checked' : ''}>
           <span class="t">${inline(c[4])}</span><span class="tools"><button data-edit="${i}" title="Edit">✎</button></span></div>`;
       }
     } else if(b){
-      html += `<div class="row" style="margin-left:${ind * 7}px"><span class="bullet">•</span><span class="t">${inline(b[3])}</span></div>`;
+      html += `<div class="row" data-line="${i}" style="margin-left:${ind * 7}px"><span class="bullet">•</span><span class="t">${inline(b[3])}</span></div>`;
     } else if(/^\s*<img\b/i.test(l) || /^\s*<\/?\w+[^>]*>\s*$/.test(l)){
       continue;
     } else {
-      html += `<div class="p">${inline(l.trim())}</div>`;
+      html += `<div class="p" data-line="${i}">${inline(l.trim())}</div>`;
     }
   }
   m.innerHTML = html + '</div>';
@@ -365,22 +402,185 @@ function renderSettings(m){
     ${ready() ? '<button id="closeSettings">Cancel</button><button class="danger" id="forget">Forget token</button>' : ''}</div></div>`;
 }
 
+
+// ===== search =====
+let treeAt = 0;
+const cache = new Map();           // path -> {sha, text}
+let idb = null;
+function idbOpen(){
+  if(idb !== null) return idb;
+  idb = new Promise(res => {
+    try{ const r = indexedDB.open('curiosityTracker', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('blobs');
+      r.onsuccess = () => res(r.result); r.onerror = () => res(null); }catch(e){ res(null); }
+  });
+  return idb;
+}
+async function idbGet(sha){ const db = await idbOpen(); if(!db) return null;
+  return new Promise(res => { try{ const q = db.transaction('blobs').objectStore('blobs').get(sha); q.onsuccess = () => res(q.result || null); q.onerror = () => res(null); }catch(e){ res(null); } }); }
+async function idbPut(sha, text){ const db = await idbOpen(); if(!db) return;
+  try{ db.transaction('blobs', 'readwrite').objectStore('blobs').put(text, sha); }catch(e){} }
+
+let indexing = null;
+function progress(d, t){ const el = document.getElementById('sprog'); if(el) el.textContent = `Loading your files for search… ${d}/${t}`; }
+function ensureIndex(){
+  if(!indexing) indexing = buildIndex().finally(() => { indexing = null; });
+  return indexing;
+}
+async function buildIndex(){
+  if(Date.now() - treeAt > 60000){ try{ files = await listFiles(); }catch(e){} }
+  const work = files.filter(p => !cache.has(p) || cache.get(p).sha !== fileSha[p]);
+  let done = files.length - work.length; progress(done, files.length);
+  async function worker(){
+    while(work.length){
+      const p = work.shift(), sha = fileSha[p];
+      try{
+        let text = await idbGet(sha);
+        if(text == null){ const b = await gh(`${repoUrl()}/git/blobs/${sha}`); text = b64dec(b.content); idbPut(sha, text); }
+        cache.set(p, {sha, text});
+      }catch(e){}
+      progress(++done, files.length);
+    }
+  }
+  await Promise.all(Array.from({length: 8}, worker));
+}
+
+// Loose matching: case, accents, ё/е, ı/i, İ/i
+const norm = s => s.toLowerCase().replace(/ё/g, 'е').replace(/ı/g, 'i').normalize('NFD').replace(/[̀-ͯ]/g, '');
+function parseQuery(q){
+  const out = {terms: [], not: [], is: null, in: []};
+  const re = /(-?)(?:(is|in):)?(?:"([^"]+)"|(\S+))/gi; let m;
+  while((m = re.exec(q))){
+    const val = (m[3] || m[4] || '').trim(); if(!val) continue;
+    const key = (m[2] || '').toLowerCase();
+    if(key === 'is'){ const v = val.toLowerCase(); out.is = /^(open|todo|undone)$/.test(v) ? 'open' : /^(done|checked)$/.test(v) ? 'done' : out.is; continue; }
+    if(key === 'in'){ out.in.push(norm(val)); continue; }
+    (m[1] ? out.not : out.terms).push(norm(val));
+  }
+  return out;
+}
+const visible = l => l.replace(/\]\([^)]*\)/g, ']');   // text without link targets
+function search(q){
+  const Q = parseQuery(q); if(!Q.terms.length && !Q.is && !Q.in.length) return [];
+  const results = [];
+  for(const [path, {text}] of cache){
+    if(!fileSha[path]) continue;
+    const np = norm(path);
+    if(Q.in.length && !Q.in.every(t => np.includes(t))) continue;
+    const L = text.split('\n'); let heading = ''; const hits = []; let score = 0;
+    const pathHit = Q.terms.length && Q.terms.every(t => np.includes(t));
+    L.forEach((l, i) => {
+      const h = l.match(HEAD); if(h) heading = h[2];
+      if(!l.trim()) return;
+      const c = l.match(CHECK);
+      if(Q.is && (!c || (Q.is === 'open') !== (c[3] === ' '))) return;
+      const nv = norm(visible(l)), nl = norm(l), nh = norm(heading);
+      if(Q.not.some(t => nl.includes(t))) return;
+      if(Q.terms.length){
+        if(!Q.terms.some(t => nl.includes(t))) return;                   // at least one term on the line
+        if(!Q.terms.every(t => nl.includes(t) || nh.includes(t) || np.includes(t))) return;
+      }
+      let sc = 1;
+      for(const t of Q.terms){ if(nv.includes(t)) sc += 2; if(new RegExp('(^|[^\\p{L}\\p{N}])' + t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'u').test(nv)) sc += 1; }
+      if(h) sc += 3; if(c && c[3] === ' ') sc += 0.5;
+      hits.push({i, line: l, heading: h ? '' : heading, sc}); score = Math.max(score, sc);
+    });
+    if(hits.length || pathHit) results.push({path, hits, score: score + Math.min(hits.length, 20) * 0.05 + (pathHit ? 6 : 0)});
+  }
+  return results.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
+}
+
+let expanded = new Set();
+function renderSearch(m){
+  if(indexing){ m.innerHTML = `<div class="doc muted" id="sprog">Loading your files for search…</div>`; return; }
+  const Q = parseQuery(query), res = search(query);
+  const total = res.reduce((n, r) => n + r.hits.length, 0);
+  let h = `<div class="bar"><span class="stats"><b>${total}</b> match${total === 1 ? '' : 'es'} in <b>${res.length}</b> file${res.length === 1 ? '' : 's'} · searched ${cache.size} files</span>
+    <span class="links"><a href="#" id="closeSearch">Close search</a></span></div>
+    <div class="help">Tips: <code>max podcast</code> all words · <code>"exact phrase"</code> · <code>-word</code> exclude · <code>is:open</code> / <code>is:done</code> · <code>in:russian</code> limit to a folder</div>`;
+  if(!res.length) h += `<div class="doc muted">No results.</div>`;
+  for(const r of res.slice(0, 60)){
+    const show = expanded.has(r.path) ? r.hits : r.hits.slice(0, 6);
+    const label = /README\.md$/i.test(r.path) && r.path.includes('/') ? cap(r.path.split('/').slice(-2, -1)[0]) : title(r.path);
+    h += `<div class="sres"><div class="fh" data-open="${esc(r.path)}"><b>${esc(label)}</b><span class="muted">${esc(r.path)} · ${r.hits.length}</span></div>`;
+    for(const x of show){
+      const c = x.line.match(CHECK), hd = x.line.match(HEAD), b = x.line.match(BULLET);
+      const raw = (hd ? hd[2] : c ? c[4] : b ? b[3] : x.line).trim();
+      let body = hd ? `<b>${inline(raw, r.path)}</b>` : inline(raw, r.path);
+      const pl = plain(raw);
+      if(pl.length > 260){                         // long paragraph: show a snippet around the first match
+        const npl = norm(pl); let at = Math.min(...Q.terms.map(t => { const k = npl.indexOf(t); return k < 0 ? Infinity : k; }));
+        if(!isFinite(at)) at = 0;
+        const a = Math.max(0, at - 100), z = Math.min(pl.length, at + 160);
+        body = (a ? '… ' : '') + esc(pl.slice(a, z)) + (z < pl.length ? ' …' : '');
+      }
+      h += `<div class="hit ${c && c[3] !== ' ' ? 'done' : ''}" data-jump="${esc(r.path)}" data-ln="${x.i}">`
+        + (c ? `<input type="checkbox" data-stoggle="${esc(r.path)}" data-ln="${x.i}" ${c[3] !== ' ' ? 'checked' : ''}>` : '')
+        + `<span class="t">${body}${x.heading ? `<span class="ctx">in ${esc(plain(x.heading))}</span>` : ''}</span></div>`;
+    }
+    if(r.hits.length > show.length) h += `<div class="more"><a href="#" data-more="${esc(r.path)}">Show all ${r.hits.length} in this file</a></div>`;
+    h += `</div>`;
+  }
+  if(res.length > 60) h += `<div class="muted">Showing the top 60 files. Add more words to narrow it down.</div>`;
+  m.innerHTML = h;
+  m.querySelectorAll('.hit .t').forEach(el => highlight(el, Q.terms));
+}
+
+// Wrap matches in <mark>, matching the same loose way as search
+function highlight(root, terms){
+  if(!terms || !terms.length) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); const nodes = [];
+  while(walker.nextNode()) nodes.push(walker.currentNode);
+  for(const n of nodes){
+    const s = n.nodeValue; let ns = '', map = [];
+    for(let i = 0; i < s.length; i++){ const k = norm(s[i]); for(let j = 0; j < k.length; j++){ ns += k[j]; map.push(i); } }
+    const spans = [];
+    for(const t of terms){ let at = 0; while(t && (at = ns.indexOf(t, at)) >= 0){ spans.push([map[at], map[at + t.length - 1] + 1]); at += t.length; } }
+    if(!spans.length) continue;
+    spans.sort((a, b) => a[0] - b[0]); const merged = [];
+    for(const sp of spans){ const l = merged[merged.length - 1]; if(l && sp[0] <= l[1]) l[1] = Math.max(l[1], sp[1]); else merged.push(sp.slice()); }
+    const frag = document.createDocumentFragment(); let last = 0;
+    for(const [a, b] of merged){ frag.append(s.slice(last, a)); const mk = document.createElement('mark'); mk.textContent = s.slice(a, b); frag.append(mk); last = b; }
+    frag.append(s.slice(last)); n.replaceWith(frag);
+  }
+}
+
+let qTimer;
+async function runSearch(){
+  query = $('q').value;
+  if(!query.trim()){ if(view === 'search'){ view = lastView; render(); } return; }
+  if(view !== 'search'){ lastView = view === 'settings' ? 'file' : view; view = 'search'; }
+  expanded = new Set();
+  if(indexing){ render(); await indexing; }
+  else if((Date.now() - treeAt > 60000 || files.some(p => !cache.has(p) || cache.get(p).sha !== fileSha[p]))){
+    const pr = ensureIndex(); render(); await pr;
+  }
+  if(view === 'search') render();
+}
+
 // ===== actions =====
 async function loadList(){ setBusy(true); try{ files = await listFiles(); }catch(e){ toast(e.message, null, true); } setBusy(false); }
-async function open(path){
-  setBusy(true); addAt = editAt = null; view = 'file';
+async function open(path, line){
+  setBusy(true); addAt = editAt = null; view = 'file'; jumpLine = line == null ? null : line;
   path.split('/').slice(0, -1).forEach((_, i, a) => openDirs.add(a.slice(0, i + 1).join('/'))); saveOpen();
-  try{ cur = {path, ...(await getFile(path))}; try{ localStorage.setItem(KEY + '.last', path); }catch(e){} location.hash = ''; }
+  try{ cur = {path, ...(await getFile(path))}; cache.set(path, {sha: cur.sha, text: cur.text}); fileSha[path] = cur.sha;
+       try{ localStorage.setItem(KEY + '.last', path); }catch(e){} location.hash = ''; }
   catch(e){ toast(e.message, null, true); }
-  setBusy(false); $('nav').classList.remove('open'); render(); window.scrollTo(0, 0);
+  setBusy(false); $('nav').classList.remove('open'); render();
+  const target = jumpLine != null && document.querySelector(`main [data-line="${jumpLine}"]`);
+  if(target){ target.scrollIntoView({block: 'center'}); target.classList.add('flash'); highlight(target, parseQuery(query).terms); }
+  else window.scrollTo(0, 0);
+  jumpLine = null;
 }
 const L = () => cur.text.split('\n');
 const name = () => title(cur.path) === 'Overview' ? (cur.path.split('/').slice(-2, -1)[0] || 'README') : title(cur.path);
 
 document.addEventListener('click', async e => {
-  const el = e.target.closest('[data-open],[data-dir],[data-addat],[data-addgo],[data-edit],[data-save],[data-del],[data-cancel],button,a#reload');
+  const el = e.target.closest('[data-open],[data-more],[data-jump],[data-dir],[data-addat],[data-addgo],[data-edit],[data-save],[data-del],[data-cancel],button,a#reload');
   if(!el) return;
   if(el.dataset.open){ e.preventDefault(); return open(el.dataset.open); }
+  if(el.dataset.more){ e.preventDefault(); expanded.add(el.dataset.more); return render(); }
+  if(el.dataset.jump){ if(e.target.closest('a, input')) return; return open(el.dataset.jump, +el.dataset.ln); }
   if(el.dataset.dir){ const d = el.dataset.dir; openDirs.has(d) ? openDirs.delete(d) : openDirs.add(d); saveOpen(); return renderNav(); }
   if(el.dataset.addat !== undefined){ addAt = +el.dataset.addat; editAt = null; return render(); }
   if(el.dataset.cancel !== undefined){ addAt = editAt = null; return render(); }
@@ -404,6 +604,7 @@ document.addEventListener('click', async e => {
   }
   switch(el.id){
     case 'menuBtn': return $('nav').classList.toggle('open');
+    case 'closeSearch': e.preventDefault(); $('q').value = ''; query = ''; view = lastView; return render();
     case 'settingsBtn': view = 'settings'; return render();
     case 'closeSettings': view = 'file'; return render();
     case 'forget': cfg.token = ''; store(); files = []; cur = null; return render();
@@ -419,22 +620,34 @@ document.addEventListener('click', async e => {
 });
 document.addEventListener('change', e => {
   if(e.target.id === 'hideDone'){ cfg.hideDone = e.target.checked; store(); return render(); }
+  if(e.target.dataset && e.target.dataset.stoggle){       // tick straight from search results
+    const path = e.target.dataset.stoggle, i = +e.target.dataset.ln, c0 = cache.get(path);
+    cur = {path, text: c0.text, sha: c0.sha};
+    const lines = L(), c = lines[i].match(CHECK), nowDone = c[3] === ' ';
+    return commit(opSet(lines[i], occurrence(lines, i), `${c[1]}${c[2]} [${nowDone ? 'x' : ' '}] ${c[4]}`), `${name()}: ${nowDone ? '✔' : 'reopen'} "${short(c[4])}"`);
+  }
   const t = e.target.dataset && e.target.dataset.toggle; if(t === undefined) return;
   const i = +t, lines = L(), c = lines[i].match(CHECK), nowDone = c[3] === ' ';
   commit(opSet(lines[i], occurrence(lines, i), `${c[1]}${c[2]} [${nowDone ? 'x' : ' '}] ${c[4]}`), `${name()}: ${nowDone ? '✔' : 'reopen'} "${short(c[4])}"`);
 });
 document.addEventListener('keydown', e => {
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
+  if((e.key === 'k' && (e.metaKey || e.ctrlKey)) || (e.key === '/' && !typing)){ e.preventDefault(); $('q').focus(); $('q').select(); return; }
+  if(e.key === 'Escape' && e.target.id === 'q'){ $('q').value = ''; $('q').blur(); return runSearch(); }
   if(e.key === 'Escape'){ addAt = editAt = null; render(); }
   if(e.key !== 'Enter') return;
   if(e.target.id === 'addText') document.querySelector('[data-addgo]').click();
   if(e.target.id === 'editText') document.querySelector('[data-save]').click();
 });
+$('q').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(runSearch, 180); });
+$('q').addEventListener('focus', () => { if(ready() && !indexing && cache.size < files.length) ensureIndex(); });
 // Re-sync when you come back to the tab (picks up edits made directly on GitHub)
 document.addEventListener('visibilitychange', async () => {
-  if(document.hidden || !cur || addAt !== null || editAt !== null) return;
+  if(document.hidden || !cur || view !== 'file' || addAt !== null || editAt !== null) return;
   try{ const f = await getFile(cur.path); if(f.sha !== cur.sha){ Object.assign(cur, f); render(); toast('Updated from GitHub'); } }catch(e){}
 });
 
+if(!/Mac|iPhone|iPad/.test(navigator.platform)) $('kbdHint').textContent = 'Ctrl K';
 (async () => {
   if(!ready()) return render();
   await loadList();
